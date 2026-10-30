@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="This simple web app turns a folder of .vtf files into a beautiful collage." />
+    <meta name="theme-color" content="#202321" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+    <link rel="icon" type="image/svg+xml" href="/sprays/favicon.svg" />
+    <title>Source Sprays Collage</title>
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="/sprays/" aria-label="Source Sprays Collage home"><i data-lucide="gallery-vertical-end"></i><span>Source Sprays <strong>Collage</strong></span></a>
+      <div class="header-actions"><span class="local-badge"><i data-lucide="shield-check"></i>Local files</span><a class="icon-button" href="https://github.com/eltanschauung/source-tmp-sprays-app" target="_blank" rel="noopener" title="Source code" aria-label="Source code"><i data-lucide="code-xml"></i></a></div>
+    </header>
+    <main>
+      <section class="collection-heading">
+        <div><p class="eyebrow">TEAM FORTRESS 2</p><h1 id="collection-name">Spray collection</h1><p id="summary" role="status" aria-live="polite">No folder selected</p></div>
+        <div class="collection-actions"><button id="export" class="secondary-button" disabled><i data-lucide="download"></i>Export collage</button><button id="open-folder" class="primary-button"><i data-lucide="folder-open"></i>Open folder</button><button id="open-files" class="icon-button" title="Open VTF files" aria-label="Open VTF files"><i data-lucide="file-plus-2"></i></button></div>
+      </section>
+      <section class="toolbar" aria-label="Collection controls">
+        <label class="search-field"><i data-lucide="search"></i><input id="search" type="search" placeholder="Search filenames" aria-label="Search filenames" /></label>
+        <div class="sort-controls"><label for="sort">Sort</label><select id="sort"><option value="date">Date modified</option><option value="size">File size</option><option value="name">Filename</option><option value="dimensions">Resolution</option></select><button id="direction" class="icon-button" title="Newest first" aria-label="Newest first"><i data-lucide="arrow-down-wide-narrow"></i></button></div>
+        <label class="tile-control" title="Tile size"><i data-lucide="grid-2x2"></i><input id="tile-size" type="range" min="120" max="320" value="200" step="10" aria-label="Tile size" /></label>
+        <label class="checkbox-control"><input id="labels" type="checkbox" checked />Details</label>
+        <button id="clear" class="icon-button" title="Clear collection" aria-label="Clear collection" disabled><i data-lucide="trash-2"></i></button>
+      </section>
+      <div class="progress-track" aria-hidden="true"><div id="progress"></div></div>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <section id="empty" class="empty-state">
+        <i data-lucide="folder-open"></i><h2>Your sprays, together.</h2>
+        <button id="empty-open" class="primary-button"><i data-lucide="folder-plus"></i>Choose temp folder</button>
+      </section>
+      <section id="gallery" class="gallery" aria-label="Spray collage" hidden></section>
+      <p id="no-results" class="no-results" hidden>No matching sprays</p>
+      <footer><span id="footer-count">0 VTF files</span><span id="footer-size">0 B</span><span class="footer-right">Source Sprays Collage</span></footer>
+    </main>
+    <div id="drop-overlay" class="drop-overlay" hidden><i data-lucide="folder-down"></i><span>Drop folder or VTF files</span></div>
+    <dialog id="viewer">
+      <div class="viewer-header"><h2 id="viewer-name"></h2><button id="close-viewer" class="icon-button" title="Close" aria-label="Close"><i data-lucide="x"></i></button></div>
+      <div class="viewer-image"><img id="full-image" alt="" /></div>
+      <p id="viewer-meta"></p>
+      <div class="viewer-actions"><div id="frame-controls" hidden><label for="frame">Frame <output id="frame-number">1</output></label><input id="frame" type="range" min="0" value="0" aria-label="Animation frame" /></div><button id="download-image" class="secondary-button"><i data-lucide="download"></i>Save PNG</button></div>
+    </dialog>
+    <input id="folder-input" type="file" webkitdirectory multiple hidden />
+    <input id="file-input" type="file" accept=".vtf" multiple hidden />
+    <noscript>This application requires JavaScript to decode VTF files.</noscript>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

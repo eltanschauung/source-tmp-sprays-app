@@ -1,0 +1,18 @@
+Source Sprays Collage
+Copyright (c) 2026 Kogasatopia contributors
+Licensed under GPL-3.0-or-later. Source and build instructions:
+https://github.com/eltanschauung/source-tmp-sprays-app
+
+VTF decoding: vtf-js 1.3.0 by Koerismo, LGPL-3.0-or-later.
+Unmodified dependency; exact package is pinned in package-lock.json.
+Source: https://github.com/koerismo/vtf-js
+Package: https://www.npmjs.com/package/vtf-js/v/1.3.0
+License text: LGPL-3.0.txt, supplemented by GPL-3.0.txt.
+Bundled JavaScript source maps are included. Rebuild or replace the decoder
+from its separate source module src/decode.js and src/decode.worker.js.
+
+Icons: Lucide 1.64.0, ISC license, with Feather-derived icons under MIT.
+https://github.com/lucide-icons/lucide
+Full notices: LUCIDE-LICENSE.txt
+
+No user VTF files are distributed with this application.
