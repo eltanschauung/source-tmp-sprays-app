@@ -26,10 +26,16 @@ test('folder import, decoding, date and size sorts, details, animation, PNG down
   page.on('request', request => requests.push([request.method(), request.resourceType()]));
   await page.goto('./');
   await expect(page.getByRole('heading', { name: 'Spray collection' })).toBeVisible();
+  await page.selectOption('#sort', { label: 'Animated' });
   await page.locator('#folder-input').setInputFiles(folder);
   await expect(page.locator('#summary')).toHaveText('3 sprays / 1 unreadable');
   await expect(page.locator('.spray-button img')).toHaveCount(3);
   await expect(page.locator('#notice')).toHaveText('1 non-VTF file skipped.');
+  await expect(page.locator('.tile-name').first()).toHaveText('c-animated.vtf');
+  await page.getByRole('button', { name: 'Animated first', exact: true }).click();
+  await expect(page.locator('.tile-name').last()).toHaveText('c-animated.vtf');
+  await page.getByRole('button', { name: 'Still images first', exact: true }).click();
+  await expect(page.locator('.tile-name').first()).toHaveText('c-animated.vtf');
   await page.selectOption('#sort', 'date');
   // The broken file is newest; then b-new, animated, a-old.
   await expect(page.locator('.tile-name').nth(1)).toHaveText('b-new.VTF');

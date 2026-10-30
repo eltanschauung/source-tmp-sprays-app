@@ -40,7 +40,7 @@ function scheduleRefresh() {
   state.refreshPending = true;
   setTimeout(() => {
     state.refreshPending = false;
-    if ($('sort').value === 'dimensions') renderOrder();
+    if (['dimensions', 'animated'].includes($('sort').value)) renderOrder();
     else updateSummary();
   }, 100);
 }
@@ -350,7 +350,7 @@ $('search').addEventListener('input', renderOrder);
 $('sort').addEventListener('change', () => { updateDirection(); renderOrder(); });
 $('direction').addEventListener('click', () => { state.descending = !state.descending; updateDirection(); renderOrder(); });
 function updateDirection() {
-  const descriptions = { date: ['Oldest first', 'Newest first'], size: ['Smallest first', 'Largest first'], name: ['A to Z', 'Z to A'], dimensions: ['Lowest resolution first', 'Highest resolution first'] };
+  const descriptions = { date: ['Oldest first', 'Newest first'], size: ['Smallest first', 'Largest first'], name: ['A to Z', 'Z to A'], dimensions: ['Lowest resolution first', 'Highest resolution first'], animated: ['Still images first', 'Animated first'] };
   const label = descriptions[$('sort').value][Number(state.descending)];
   $('direction').title = label;
   $('direction').setAttribute('aria-label', label);

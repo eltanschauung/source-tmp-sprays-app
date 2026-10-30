@@ -38,6 +38,7 @@ export function sortEntries(entries, sort = 'date', descending = true, query = '
     if (sort === 'name') order = a.path.localeCompare(b.path, undefined, { numeric: true });
     else if (sort === 'size') order = a.file.size - b.file.size;
     else if (sort === 'dimensions') order = (a.width || 0) * (a.height || 0) - (b.width || 0) * (b.height || 0);
+    else if (sort === 'animated') order = Number(a.frames > 1) - Number(b.frames > 1);
     else order = a.file.lastModified - b.file.lastModified;
     return order * sign || a.path.localeCompare(b.path, undefined, { numeric: true });
   });

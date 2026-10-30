@@ -13,7 +13,9 @@ does not use HMR. All dependencies are bundled, with no external CDN requests.
 The folder picker uses `webkitdirectory` and includes nested folders. The file
 picker is a fallback for browsers/platforms without directory selection. Folder
 and file drops are supported. Sorting uses local `File.lastModified` timestamps
-(not creation time), byte size, filename, or resolution. A copied folder can have
+(not creation time), byte size, filename, resolution, or animated status (more
+than one frame). Animated sorting groups animations first by default; reversing
+puts still images first. A copied folder can have
 different timestamps. No operating-system absolute path is disclosed to the app.
 
 Before decoding, the same bounded worker pool hashes each valid VTF with MD5,

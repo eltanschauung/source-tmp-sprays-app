@@ -54,6 +54,20 @@ test('date/size sorts use real file metadata, ties deterministic, filtering non-
   assert.equal(entries[0].path, 'temp/b.vtf');
 });
 
+test('Animated sort groups multi-frame sprays first and supports reversing, filtering and pending metadata', () => {
+  const entries = [
+    { path: 'b-still.vtf', frames: 1 },
+    { path: 'c-animation.vtf', frames: 2 },
+    { path: 'a-animation.vtf', frames: 50 },
+    { path: 'd-pending.vtf' },
+  ];
+  assert.deepEqual(sortEntries(entries, 'animated').map(x => x.path), ['a-animation.vtf', 'c-animation.vtf', 'b-still.vtf', 'd-pending.vtf']);
+  assert.deepEqual(sortEntries(entries, 'animated', false).map(x => x.path), ['b-still.vtf', 'd-pending.vtf', 'a-animation.vtf', 'c-animation.vtf']);
+  assert.deepEqual(sortEntries(entries, 'animated', true, 'animation').map(x => x.path), ['a-animation.vtf', 'c-animation.vtf']);
+  entries[3].frames = 3;
+  assert.deepEqual(sortEntries(entries, 'animated').map(x => x.path), ['a-animation.vtf', 'c-animation.vtf', 'd-pending.vtf', 'b-still.vtf']);
+});
+
 test('bounded export layout covers every image, byte formatting', () => {
   for (const count of [1, 7, 200, 10000]) {
     const layout = exportLayout(count, 6);
