@@ -16,6 +16,17 @@ and file drops are supported. Sorting uses local `File.lastModified` timestamps
 (not creation time), byte size, filename, or resolution. A copied folder can have
 different timestamps. No operating-system absolute path is disclosed to the app.
 
+Before decoding, the same bounded worker pool hashes each valid VTF with MD5,
+treating only header-padding bytes 28-31 as zero. This ignores Enhanced Sprays'
+IS14 stamp; the remaining bytes (including every frame/mipmap) are hashed as-is.
+For matching hashes, only the file with the latest lastModified is displayed
+and exported, regardless of display sorting. Equal timestamps use the relative
+path alphabetically as a deterministic tiebreaker. Failed fingerprints retain
+their individual decode/error path. The summary reports hidden duplicate counts.
+Grouping is scoped to the current selection, resets on clear/re-import, and does
+not alter/delete source files or persist hashes. It is exact normalized-file
+deduplication, not perceptual similarity across recompressed/resized images.
+
 VTF 7.0-7.6 decoding uses vtf-js, including DXT1/3/5 and supported raw formats.
 The collage uses the first animation frame; individual viewers allow frame
 selection and full-resolution PNG downloads. Cube/volume textures, malformed or

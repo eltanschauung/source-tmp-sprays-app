@@ -37,9 +37,17 @@ export class DecoderPool {
   }
 
   decode(file, options = {}, priority = false) {
+    return this.run('decode', file, options, priority);
+  }
+
+  fingerprint(file) {
+    return this.run('fingerprint', file);
+  }
+
+  run(kind, file, options = {}, priority = false) {
     if (this.closed) return Promise.reject(new Error('Collection closed.'));
     return new Promise((resolve, reject) => {
-      const job = { id: ++this.nextId, file, ...options, resolve, reject };
+      const job = { id: ++this.nextId, kind, file, ...options, resolve, reject };
       if (priority) this.jobs.unshift(job);
       else this.jobs.push(job);
       this.pump();
@@ -53,8 +61,8 @@ export class DecoderPool {
       const job = this.jobs.shift();
       slot.job = job;
       slot.timeout = setTimeout(() => this.failSlot(slot, 'VTF decode exceeded the 15-second safety limit.'), 15000);
-      const { id, file, frame = 0, maxDimension = 256 } = job;
-      slot.worker.postMessage({ id, file, frame, maxDimension });
+      const { id, kind, file, frame = 0, maxDimension = 256 } = job;
+      slot.worker.postMessage({ id, kind, file, frame, maxDimension });
     }
   }
 

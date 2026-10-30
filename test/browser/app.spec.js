@@ -76,3 +76,77 @@ test('individual file picker, empty folder, replacement during decode, filename 
   await page.locator('#file-input').setInputFiles(path.join(folder, 'ignored.vmt'));
   await expect(page.locator('#notice')).toHaveText('No .vtf files found in this selection.');
 });
+
+test('stamped duplicates keep only the newest copy across sorting, filtering, viewing and export', async ({ page }) => {
+  const dir = path.resolve('.local/duplicate-temp');
+  await mkdir(dir, { recursive: true });
+  const original = await rgbaFixture({ frames: 2 });
+  const stamped = original.slice(0);
+  new Uint8Array(stamped).set(new TextEncoder().encode('IS14'), 28);
+  const differentAnimation = original.slice(0);
+  new Uint8Array(differentAnimation)[differentAnimation.byteLength - 1] ^= 1;
+  for (const [name, buffer, time] of [
+    ['old-stamped.vtf', stamped, 1600000000],
+    ['middle-identical.vtf', original, 1650000000],
+    ['newest-original.vtf', original, 1700000000],
+    ['different-animation.vtf', differentAnimation, 1750000000],
+  ]) {
+    const filename = path.join(dir, name);
+    await writeFile(filename, new Uint8Array(buffer));
+    await utimes(filename, time, time);
+  }
+  await page.goto('./');
+  await page.locator('#folder-input').setInputFiles(dir);
+  await expect(page.locator('#summary')).toHaveText('2 sprays / 2 duplicates hidden');
+  await expect(page.locator('.spray-tile')).toHaveCount(2);
+  await expect(page.locator('.tile-name')).toHaveText(['different-animation.vtf', 'newest-original.vtf']);
+  await page.locator('#direction').click();
+  await expect(page.locator('.tile-name')).toHaveText(['newest-original.vtf', 'different-animation.vtf']);
+  await page.locator('#sort').selectOption('name');
+  await expect(page.locator('.tile-name')).toHaveText(['different-animation.vtf', 'newest-original.vtf']);
+  await page.locator('#search').fill('old-stamped');
+  await expect(page.locator('#no-results')).toBeVisible();
+  await page.locator('#search').fill('');
+  await page.getByRole('button', { name: 'View newest-original.vtf', exact: true }).click();
+  await expect(page.locator('#download-image')).toBeEnabled();
+  await page.locator('#close-viewer').click();
+  const downloaded = page.waitForEvent('download');
+  await page.locator('#export').click();
+  const chunks = [];
+  for await (const chunk of await (await downloaded).createReadStream()) chunks.push(chunk);
+  const png = Buffer.concat(chunks);
+  expect(png.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+  expect(png.readUInt32BE(16) * png.readUInt32BE(20)).toBe(2 * 256 * 256);
+  // The source files remain byte-for-byte intact, including the IS14 stamp.
+  const { readFile } = await import('node:fs/promises');
+  expect(await readFile(path.join(dir, 'old-stamped.vtf'))).toEqual(Buffer.from(stamped));
+  await page.locator('#clear').click();
+  await expect(page.locator('#summary')).toHaveText('No folder selected');
+  await page.locator('#file-input').setInputFiles(path.join(dir, 'old-stamped.vtf'));
+  await expect(page.locator('#summary')).toHaveText('1 spray');
+});
+
+test('filtering and replacing a collection during fingerprinting cannot strand jobs or restore old tiles', async ({ page }) => {
+  await page.addInitScript(() => {
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message, ...args) {
+      if (message.kind === 'fingerprint') setTimeout(() => post.call(this, message, ...args), 200);
+      else post.call(this, message, ...args);
+    };
+  });
+  await page.goto('./');
+  await page.locator('#folder-input').setInputFiles(folder);
+  await expect(page.locator('#summary')).toContainText('Checking duplicates');
+  await page.locator('#search').fill('b-new');
+  await expect(page.locator('#summary')).toHaveText('3 sprays / 1 unreadable');
+  await expect(page.locator('.spray-tile:visible')).toHaveCount(1);
+  await page.locator('#search').fill('');
+  await expect(page.locator('.spray-button img')).toHaveCount(3);
+  await page.locator('#folder-input').setInputFiles(folder);
+  await expect(page.locator('#summary')).toContainText('Checking duplicates');
+  await page.locator('#clear').click();
+  await page.locator('#file-input').setInputFiles(path.join(folder, 'a-old.vtf'));
+  await expect(page.locator('#summary')).toHaveText('1 spray');
+  await expect(page.locator('.spray-tile')).toHaveCount(1);
+  await expect(page.locator('.tile-name')).toHaveText('a-old.vtf');
+});

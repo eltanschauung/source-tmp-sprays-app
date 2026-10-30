@@ -15,4 +15,8 @@ Icons: Lucide 1.64.0, ISC license, with Feather-derived icons under MIT.
 https://github.com/lucide-icons/lucide
 Full notices: LUCIDE-LICENSE.txt
 
+Normalized-file hashing: @noble/hashes 2.4.0 by Paul Miller, MIT license.
+https://github.com/paulmillr/noble-hashes
+Full notice: NOBLE-HASHES-LICENSE.txt
+
 No user VTF files are distributed with this application.

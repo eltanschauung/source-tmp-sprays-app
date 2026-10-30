@@ -1,12 +1,13 @@
 import { createIcons, GalleryVerticalEnd, ShieldCheck, CodeXml, Download, FolderOpen, FilePlus2, Search, ArrowDownWideNarrow, ArrowUpNarrowWide, Grid2x2, Trash2, FolderPlus, FolderDown, X } from 'lucide';
 import { formatBytes, sortEntries, exportLayout } from './catalog.js';
 import { DecoderPool } from './pool.js';
+import { deduplicateEntries } from './duplicates.js';
 import './style.css';
 
 const icons = { GalleryVerticalEnd, ShieldCheck, CodeXml, Download, FolderOpen, FilePlus2, Search, ArrowDownWideNarrow, ArrowUpNarrowWide, Grid2x2, Trash2, FolderPlus, FolderDown, X };
 const $ = id => document.getElementById(id);
 const refreshIcons = () => createIcons({ icons });
-const state = { entries: [], generation: 0, descending: true, pool: null, completed: 0, ready: 0, failed: 0, bytes: 0, viewerToken: 0, fullUrl: null, selected: null, refreshPending: false };
+const state = { entries: [], generation: 0, descending: true, pool: null, completed: 0, ready: 0, failed: 0, bytes: 0, viewerToken: 0, fullUrl: null, selected: null, refreshPending: false, checkingDuplicates: false, fingerprinted: 0, duplicates: 0 };
 const dateFormat = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 refreshIcons();
 
@@ -22,11 +23,14 @@ function visibleEntries() {
 function updateSummary() {
   const { ready, failed } = state;
   const count = state.entries.length;
-  const pending = state.completed < count;
-  $('summary').textContent = count ? `${ready.toLocaleString()} ${ready === 1 ? 'spray' : 'sprays'}${pending ? ` / ${count.toLocaleString()} files` : ''}${failed ? ` / ${failed.toLocaleString()} unreadable` : ''}${pending ? ' / Processing' : ''}` : 'No folder selected';
+  const pending = state.checkingDuplicates || state.completed < count;
+  $('summary').textContent = state.checkingDuplicates
+    ? `${state.fingerprinted.toLocaleString()} / ${count.toLocaleString()} files / Checking duplicates`
+    : count ? `${ready.toLocaleString()} ${ready === 1 ? 'spray' : 'sprays'}${pending ? ` / ${count.toLocaleString()} files` : ''}${failed ? ` / ${failed.toLocaleString()} unreadable` : ''}${state.duplicates ? ` / ${state.duplicates.toLocaleString()} duplicates hidden` : ''}${pending ? ' / Processing' : ''}` : 'No folder selected';
   $('footer-count').textContent = `${count.toLocaleString()} VTF files`;
   $('footer-size').textContent = formatBytes(state.bytes);
-  $('progress').style.width = count && pending ? `${state.completed / count * 100}%` : '0';
+  $('progress').style.width = count && pending
+    ? `${state.checkingDuplicates ? state.fingerprinted / count * 50 : 50 + state.completed / count * 50}%` : '0';
   $('export').disabled = pending || !visibleEntries().some(entry => entry.url);
   $('clear').disabled = !count;
 }
@@ -42,6 +46,13 @@ function scheduleRefresh() {
 }
 
 function renderOrder() {
+  if (state.checkingDuplicates) {
+    $('empty').hidden = true;
+    $('gallery').hidden = true;
+    $('no-results').hidden = true;
+    updateSummary();
+    return;
+  }
   const ordered = visibleEntries();
   const visible = new Set(ordered);
   for (const entry of state.entries) entry.tile.hidden = !visible.has(entry);
@@ -126,6 +137,8 @@ function reset() {
   state.entries = [];
   state.completed = 0;
   state.ready = state.failed = state.bytes = 0;
+  state.checkingDuplicates = false;
+  state.fingerprinted = state.duplicates = 0;
   $('gallery').replaceChildren();
   $('collection-name').textContent = 'Spray collection';
   $('folder-input').value = '';
@@ -172,7 +185,7 @@ async function decodeEntry(entry, generation, pool) {
   }
 }
 
-function loadFiles(items, label) {
+async function loadFiles(items, label) {
   reset();
   const candidates = items.filter(({ file }) => /\.vtf$/i.test(file.name));
   if (!candidates.length) {
@@ -186,15 +199,38 @@ function loadFiles(items, label) {
   state.entries = candidates.map(item => ({ ...item, url: null, error: null }));
   state.bytes = candidates.reduce((sum, entry) => sum + entry.file.size, 0);
   $('collection-name').textContent = label || 'Spray collection';
+  const pool = state.pool = new DecoderPool();
+  const generation = state.generation;
+  state.checkingDuplicates = true;
+  renderOrder();
+  const skipped = items.length - candidates.length;
+  if (skipped) notice(`${skipped.toLocaleString()} non-VTF ${skipped === 1 ? 'file' : 'files'} skipped.`);
+  // Finish grouping before decoding/displaying anything. Worker completion order
+  // and the selected display sort must never decide which copy survives.
+  await Promise.all(state.entries.map(async entry => {
+    try {
+      const { fingerprint } = await pool.fingerprint(entry.file);
+      entry.fingerprint = fingerprint;
+    } catch {
+      // Let the normal decode path show a file-specific error; never hide it.
+    } finally {
+      if (generation === state.generation) {
+        ++state.fingerprinted;
+        scheduleRefresh();
+      }
+    }
+  }));
+  if (generation !== state.generation) return;
+  const deduplicated = deduplicateEntries(state.entries);
+  state.entries = deduplicated.entries;
+  state.duplicates = deduplicated.duplicates;
+  state.bytes = state.entries.reduce((sum, entry) => sum + entry.file.size, 0);
+  state.checkingDuplicates = false;
   const fragment = document.createDocumentFragment();
   for (const entry of state.entries) fragment.append(tileFor(entry));
   $('gallery').append(fragment);
-  state.pool = new DecoderPool();
   renderOrder();
-  const generation = state.generation;
-  for (const entry of visibleEntries()) void decodeEntry(entry, generation, state.pool);
-  const skipped = items.length - candidates.length;
-  if (skipped) notice(`${skipped.toLocaleString()} non-VTF ${skipped === 1 ? 'file' : 'files'} skipped.`);
+  for (const entry of sortEntries(state.entries, $('sort').value, state.descending)) void decodeEntry(entry, generation, pool);
 }
 
 async function showFrame() {
