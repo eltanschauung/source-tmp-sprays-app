@@ -13,9 +13,11 @@ does not use HMR. All dependencies are bundled, with no external CDN requests.
 The folder picker uses `webkitdirectory` and includes nested folders. The file
 picker is a fallback for browsers/platforms without directory selection. Folder
 and file drops are supported. Sorting uses local `File.lastModified` timestamps
-(not creation time), byte size, filename, resolution, or animated status (more
-than one frame). Animated sorting groups animations first by default; reversing
-puts still images first. A copied folder can have
+(not creation time), byte size, filename, resolution, animated status (more
+than one frame), or distance fade. Animated/fade sorting groups those first by
+default; reversing puts the others first. The size filter lists the decoded
+resolutions actually present (with counts; sprays are not always square) and
+shows only one of them, including in collage exports. A copied folder can have
 different timestamps. No operating-system absolute path is disclosed to the app.
 
 Before decoding, the same bounded worker pool hashes each valid VTF with MD5,
@@ -28,10 +30,46 @@ their individual decode/error path. The summary reports hidden duplicate counts.
 Grouping is scoped to the current selection, resets on clear/re-import, and does
 not alter/delete source files or persist hashes. It is exact normalized-file
 deduplication, not perceptual similarity across recompressed/resized images.
+Tools that hash whole files (SHA-256 etc.) miss these duplicates: on a real
+10,640-file temp folder, all 115 duplicate copies differed only in the stamp.
+
+Each tile has a "mark for deletion" checkbox (also in the viewer). Marked sprays
+are hidden immediately, with a floating top-left Undo toast (10 s; marks made
+while it is up are undone together), left out of collage exports, and remembered
+in localStorage by normalized hash, so they stay hidden on later imports and
+when the same spray is downloaded again under another name; unreadable files
+are remembered by path. "Show marked" reveals them for unmarking. The Marked
+dialog lists every marked file, including hidden duplicate copies of a marked
+spray, and offers a list copy and Windows (.bat) / POSIX (.sh) delete scripts.
+"Add duplicate copies" (remembered in localStorage) puts every hidden older
+duplicate copy on the list as well, without marking the kept newest copy.
+Scripts use paths relative to the opened folder, must be placed in that folder,
+refuse to run if none of the files are next to them, and ask before deleting.
+The app itself still never modifies or deletes files.
 
 VTF 7.0-7.6 decoding uses vtf-js, including DXT1/3/5 and supported raw formats.
 The collage uses the first animation frame; individual viewers allow frame
-selection and full-resolution PNG downloads. Cube/volume textures, malformed or
+selection and full-resolution PNG downloads. Animated sprays play automatically
+at 5 fps (TF2's fixed spray rate) in tiles and the viewer; the "Animate" toggle
+turns tile playback off, and it defaults off with prefers-reduced-motion. Tile
+frames are decoded only for tiles near the viewport, downscaled to 256 px and a
+2-megapixel frame sheet, kept as a compressed PNG, and their bitmaps released
+when scrolled away. The viewer plays a sheet of up to 1024 px / 16 megapixels;
+pausing or scrubbing switches back to the full-resolution frame for saving.
+
+Distance-fade sprays store different pictures in some mipmaps, so another image
+appears as the spray gets farther away (sometimes an unrelated or offensive one
+behind a harmless close-up). Each mip of 32 px and up (and at most 1024 px) is
+compared with the level above it using 16x16 block averages (at least 4x4 pixels
+per block) composited over gray; a mean difference above 10 / 14 / 18 (levels of
+128+ / 64 / 32 px) marks a new picture. Per-pixel comparison is unusable because
+compression and resampling filters differ; these thresholds flagged about 3% of
+~5,900 real mipmapped sprays. Fade sprays preview their closest picture (never a
+smaller mip), show a "Fades: N pictures" badge and a strip of up to three farther
+pictures on the tile, and the viewer's Distance slider shows every mip level at
+full size (pixelated); Save PNG saves the level shown.
+
+Cube/volume textures, malformed or
 unsupported formats, files over 64 MiB, excessive dimensions/frames, and decode
 timeouts appear as per-file errors without stopping the remaining collection.
 Two workers process bounded thumbnails, one selected full image is retained,

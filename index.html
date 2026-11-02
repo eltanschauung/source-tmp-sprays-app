@@ -17,13 +17,13 @@
     <main>
       <section class="collection-heading">
         <div><p class="eyebrow">TEAM FORTRESS 2</p><h1 id="collection-name">Spray collection</h1><p id="summary" role="status" aria-live="polite">No folder selected</p></div>
-        <div class="collection-actions"><button id="export" class="secondary-button" disabled><i data-lucide="download"></i>Export collage</button><button id="open-folder" class="primary-button"><i data-lucide="folder-open"></i>Open folder</button><button id="open-files" class="icon-button" title="Open VTF files" aria-label="Open VTF files"><i data-lucide="file-plus-2"></i></button></div>
+        <div class="collection-actions"><button id="marked" class="secondary-button" title="Sprays marked for deletion" disabled><i data-lucide="list-x"></i><span class="button-label">Marked</span> <span id="marked-count">0</span></button><button id="export" class="secondary-button" disabled><i data-lucide="download"></i>Export collage</button><button id="open-folder" class="primary-button"><i data-lucide="folder-open"></i>Open folder</button><button id="open-files" class="icon-button" title="Open VTF files" aria-label="Open VTF files"><i data-lucide="file-plus-2"></i></button></div>
       </section>
       <section class="toolbar" aria-label="Collection controls">
         <label class="search-field"><i data-lucide="search"></i><input id="search" type="search" placeholder="Search filenames" aria-label="Search filenames" /></label>
-        <div class="sort-controls"><label for="sort">Sort</label><select id="sort"><option value="date">Date modified</option><option value="size">File size</option><option value="name">Filename</option><option value="dimensions">Resolution</option><option value="animated">Animated</option></select><button id="direction" class="icon-button" title="Newest first" aria-label="Newest first"><i data-lucide="arrow-down-wide-narrow"></i></button></div>
+        <div class="sort-controls"><label for="sort">Sort</label><select id="sort"><option value="date">Date modified</option><option value="size">File size</option><option value="name">Filename</option><option value="dimensions">Resolution</option><option value="animated">Animated</option><option value="fading">Distance fade</option></select><button id="direction" class="icon-button" title="Newest first" aria-label="Newest first"><i data-lucide="arrow-down-wide-narrow"></i></button><select id="resolution" aria-label="Show only one resolution" title="Show only one resolution" disabled><option value="">All sizes</option></select></div>
         <label class="tile-control" title="Tile size"><i data-lucide="grid-2x2"></i><input id="tile-size" type="range" min="120" max="320" value="200" step="10" aria-label="Tile size" /></label>
-        <label class="checkbox-control"><input id="labels" type="checkbox" checked />Details</label>
+        <div class="toggles"><label class="checkbox-control"><input id="labels" type="checkbox" checked />Details</label><label class="checkbox-control" title="Play animated sprays at 5 frames per second"><input id="animate" type="checkbox" checked />Animate</label><label class="checkbox-control" title="Show sprays marked for deletion"><input id="show-marked" type="checkbox" />Show marked</label></div>
         <button id="clear" class="icon-button" title="Clear collection" aria-label="Clear collection" disabled><i data-lucide="trash-2"></i></button>
       </section>
       <div class="progress-track" aria-hidden="true"><div id="progress"></div></div>
@@ -36,12 +36,21 @@
       <p id="no-results" class="no-results" hidden>No matching sprays</p>
       <footer><span id="footer-count">0 VTF files</span><span id="footer-size">0 B</span><span class="footer-right">Source Sprays Collage</span></footer>
     </main>
+    <div id="toast" class="toast" role="status" popover="manual" hidden><span id="toast-text"></span><button id="toast-undo">Undo</button><button id="toast-close" class="icon-button" title="Dismiss" aria-label="Dismiss"><i data-lucide="x"></i></button></div>
     <div id="drop-overlay" class="drop-overlay" hidden><i data-lucide="folder-down"></i><span>Drop folder or VTF files</span></div>
     <dialog id="viewer">
       <div class="viewer-header"><h2 id="viewer-name"></h2><button id="close-viewer" class="icon-button" title="Close" aria-label="Close"><i data-lucide="x"></i></button></div>
-      <div class="viewer-image"><img id="full-image" alt="" /></div>
+      <div class="viewer-image"><img id="full-image" alt="" /><canvas id="full-animation" aria-hidden="true" hidden></canvas></div>
       <p id="viewer-meta"></p>
-      <div class="viewer-actions"><div id="frame-controls" hidden><label for="frame">Frame <output id="frame-number">1</output></label><input id="frame" type="range" min="0" value="0" aria-label="Animation frame" /></div><button id="download-image" class="secondary-button"><i data-lucide="download"></i>Save PNG</button></div>
+      <div class="viewer-actions"><div id="frame-controls" hidden><button id="play" class="icon-button" title="Play animation" aria-label="Play animation"><i data-lucide="play"></i></button><label for="frame">Frame <output id="frame-number">1</output></label><input id="frame" type="range" min="0" value="0" aria-label="Animation frame" /></div><div id="distance-controls" title="Fade sprays show a different picture as you move away" hidden><label for="distance">Distance <output id="distance-label">Close</output></label><input id="distance" type="range" min="0" value="0" aria-label="Viewing distance" /></div><button id="mark-viewer" class="secondary-button"><i data-lucide="list-x"></i><span>Mark for deletion</span></button><button id="download-image" class="secondary-button"><i data-lucide="download"></i>Save PNG</button></div>
+    </dialog>
+    <dialog id="marked-dialog" aria-labelledby="marked-title">
+      <div class="viewer-header"><h2 id="marked-title">Marked for deletion</h2><button id="close-marked" class="icon-button" title="Close" aria-label="Close"><i data-lucide="x"></i></button></div>
+      <p id="marked-summary" class="marked-summary"></p>
+      <button id="toggle-duplicates" class="secondary-button marked-duplicates" hidden></button>
+      <ul id="marked-list" class="marked-list"></ul>
+      <div class="marked-actions"><button id="script-windows" class="primary-button"><i data-lucide="download"></i>Windows script (.bat)</button><button id="script-unix" class="secondary-button"><i data-lucide="download"></i>Linux / macOS script (.sh)</button><button id="copy-marked" class="secondary-button">Copy list</button><button id="unmark-all" class="secondary-button">Unmark all</button></div>
+      <p id="marked-status" class="marked-status" role="status"></p>
     </dialog>
     <input id="folder-input" type="file" webkitdirectory multiple hidden />
     <input id="file-input" type="file" accept=".vtf" multiple hidden />

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { rgbaFixture, dxtFixture } from '../fixtures.js';
+import { rgbaFixture, dxtFixture, fadeFixture } from '../fixtures.js';
 import { mkdir, writeFile, utimes } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -59,6 +59,12 @@ test('folder import, decoding, date and size sorts, details, animation, PNG down
   expect((await imageDownload).suggestedFilename()).toBe('c-animated-frame-2.png');
   await page.locator('#close-viewer').click();
   await page.locator('#search').fill('');
+  // Resolution filter lists the sizes present, largest first, with counts.
+  await expect(page.locator('#resolution option')).toHaveText(['All sizes', '64 x 64 (2)', '4 x 4 (1)']);
+  await page.locator('#resolution').selectOption('4x4');
+  await expect(page.locator('.spray-tile:visible .tile-name')).toHaveText(['b-new.VTF']);
+  await page.locator('#resolution').selectOption('');
+  await expect(page.locator('.spray-tile:visible')).toHaveCount(4);
   const download = page.waitForEvent('download');
   await page.locator('#export').click();
   expect((await download).suggestedFilename()).toBe('source-sprays-collage.png');
@@ -126,10 +132,160 @@ test('stamped duplicates keep only the newest copy across sorting, filtering, vi
   // The source files remain byte-for-byte intact, including the IS14 stamp.
   const { readFile } = await import('node:fs/promises');
   expect(await readFile(path.join(dir, 'old-stamped.vtf'))).toEqual(Buffer.from(stamped));
+  // Hidden older copies can be added to the deletion list without marking the kept copy.
+  await expect(page.locator('#marked')).toBeEnabled();
+  await expect(page.locator('#marked-count')).toHaveText('0');
+  await page.locator('#marked').click();
+  await page.locator('#toggle-duplicates').click();
+  await expect(page.locator('#toggle-duplicates')).toHaveText('Remove 2 duplicate copies');
+  await expect(page.locator('#marked-list li span')).toHaveText(['middle-identical.vtf', 'old-stamped.vtf']);
+  await expect(page.locator('#marked-list button')).toHaveCount(0);
+  await expect(page.locator('#marked-count')).toHaveText('2');
+  await expect(page.locator('.spray-tile:visible')).toHaveCount(2);
+  await page.locator('#toggle-duplicates').click();
+  await expect(page.locator('#toggle-duplicates')).toHaveText('Add 2 duplicate copies');
+  await expect(page.locator('#marked-summary')).toHaveText('Nothing in this folder is marked.');
+  await page.locator('#close-marked').click();
   await page.locator('#clear').click();
   await expect(page.locator('#summary')).toHaveText('No folder selected');
   await page.locator('#file-input').setInputFiles(path.join(dir, 'old-stamped.vtf'));
   await expect(page.locator('#summary')).toHaveText('1 spray');
+});
+
+test('marking hides sprays, persists across imports, excludes them from export and builds delete scripts', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('./');
+  await page.locator('#folder-input').setInputFiles(folder);
+  await expect(page.locator('#summary')).toHaveText('3 sprays / 1 unreadable');
+  await expect(page.locator('#marked')).toBeDisabled();
+  await page.getByRole('checkbox', { name: 'Mark c-animated.vtf for deletion' }).check();
+  await page.getByRole('checkbox', { name: 'Mark broken.vtf for deletion' }).check();
+  await expect(page.locator('.spray-tile:visible')).toHaveCount(2);
+  await expect(page.locator('#summary')).toHaveText('3 sprays / 1 unreadable / 2 marked');
+  // Marks made while the floating toast is up are grouped and undone together.
+  await expect(page.locator('#toast')).toBeVisible();
+  await expect(page.locator('#toast-text')).toHaveText('2 sprays marked for deletion and hidden.');
+  expect(await page.locator('#toast').evaluate(toast => getComputedStyle(toast).position)).toBe('fixed');
+  await page.locator('#toast-undo').click();
+  await expect(page.locator('#toast')).toBeHidden();
+  await expect(page.locator('.spray-tile:visible')).toHaveCount(4);
+  await page.getByRole('checkbox', { name: 'Mark c-animated.vtf for deletion' }).check();
+  await expect(page.locator('#toast-text')).toHaveText('c-animated.vtf marked for deletion and hidden.');
+  await page.locator('#toast-close').click();
+  await expect(page.locator('#toast')).toBeHidden();
+  await page.getByRole('checkbox', { name: 'Mark broken.vtf for deletion' }).check();
+  await page.locator('#show-marked').check();
+  await expect(page.locator('.spray-tile:visible')).toHaveCount(4);
+  await expect(page.locator('.spray-tile.marked')).toHaveCount(2);
+  await page.locator('#show-marked').uncheck();
+  await page.locator('#marked').click();
+  await expect(page.locator('#marked-list li span')).toHaveText(['broken.vtf', 'nested/c-animated.vtf']);
+  const script = page.waitForEvent('download');
+  await page.locator('#script-windows').click();
+  const download = await script;
+  expect(download.suggestedFilename()).toBe('delete-marked-sprays.bat');
+  const chunks = [];
+  for await (const chunk of await download.createReadStream()) chunks.push(chunk);
+  const text = Buffer.concat(chunks).toString();
+  expect(text).toContain('if exist "nested\\c-animated.vtf" del /f /q "nested\\c-animated.vtf"');
+  expect(text).toContain('if exist "broken.vtf" del /f /q "broken.vtf"');
+  await page.locator('#close-marked').click();
+  // Collage export leaves marked sprays out: 2 remaining stills.
+  const collage = page.waitForEvent('download');
+  await page.locator('#export').click();
+  const png = [];
+  for await (const chunk of await (await collage).createReadStream()) png.push(chunk);
+  const image = Buffer.concat(png);
+  expect(image.readUInt32BE(16) * image.readUInt32BE(20)).toBe(2 * 256 * 256);
+  // Marks survive a reload and re-import.
+  await page.reload();
+  await page.locator('#folder-input').setInputFiles(folder);
+  await expect(page.locator('#summary')).toHaveText('3 sprays / 1 unreadable / 2 marked');
+  await expect(page.locator('.spray-tile:visible')).toHaveCount(2);
+  await expect(page.locator('#notice')).toContainText('2 previously marked sprays are hidden.');
+  await page.locator('#marked').click();
+  await page.getByRole('button', { name: 'Unmark broken.vtf' }).click();
+  await expect(page.locator('#marked-list li')).toHaveCount(1);
+  await page.locator('#unmark-all').click();
+  await expect(page.locator('#marked-summary')).toHaveText('Nothing in this folder is marked.');
+  await page.locator('#close-marked').click();
+  await expect(page.locator('.spray-tile:visible')).toHaveCount(4);
+  expect(errors).toEqual([]);
+});
+
+test('animated sprays play automatically in tiles and the viewer, and pause on scrub', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('./');
+  await page.locator('#folder-input').setInputFiles(folder);
+  await expect(page.locator('#summary')).toHaveText('3 sprays / 1 unreadable');
+  const tile = page.locator('.spray-tile[data-path="fixture-temp/nested/c-animated.vtf"]');
+  await expect(tile.locator('canvas')).toHaveCount(1);
+  await expect(tile.locator('img')).toBeHidden();
+  // The frame shown by the tile canvas changes over time.
+  const sample = () => tile.locator('canvas').evaluate(canvas => [...canvas.getContext('2d').getImageData(0, 0, 1, 1).data].join());
+  const seen = new Set([await sample()]);
+  await expect.poll(async () => { seen.add(await sample()); return seen.size; }, { timeout: 3000 }).toBe(2);
+  await page.locator('#animate').uncheck();
+  await expect(tile.locator('canvas')).toHaveCount(0);
+  await expect(tile.locator('img')).toBeVisible();
+  await page.locator('#animate').check();
+  await expect(tile.locator('canvas')).toHaveCount(1);
+  await page.getByRole('button', { name: 'View c-animated.vtf', exact: true }).click();
+  await expect(page.locator('#full-animation')).toBeVisible();
+  await expect(page.locator('#play')).toHaveAttribute('aria-label', 'Pause animation');
+  const frames = new Set();
+  await expect.poll(async () => { frames.add(await page.locator('#frame-number').textContent()); return frames.size; }, { timeout: 3000 }).toBe(2);
+  await page.locator('#play').click();
+  await expect(page.locator('#play')).toHaveAttribute('aria-label', 'Play animation');
+  await expect(page.locator('#full-image')).toBeVisible();
+  await page.locator('#play').click();
+  await expect(page.locator('#full-animation')).toBeVisible();
+  await page.locator('#frame').fill('0');
+  await page.locator('#frame').dispatchEvent('change');
+  await expect(page.locator('#play')).toHaveAttribute('aria-label', 'Play animation');
+  await expect(page.locator('#frame-number')).toHaveText('1 / 2');
+  await expect(page.locator('#full-image')).toBeVisible();
+  await page.locator('#mark-viewer').click();
+  await expect(page.locator('#mark-viewer')).toHaveText('Unmark');
+  await expect(page.locator('#toast')).toBeVisible();
+  await page.locator('#close-viewer').click();
+  await expect(tile).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test('distance-fade sprays are badged, sortable and previewed level by level', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const dir = path.resolve('.local/fade-temp');
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, 'fade.vtf'), new Uint8Array(await fadeFixture()));
+  await writeFile(path.join(dir, 'plain.vtf'), new Uint8Array(await rgbaFixture({ mips: 3 })));
+  await page.goto('./');
+  await page.locator('#sort').selectOption('fading');
+  await page.locator('#folder-input').setInputFiles(dir);
+  await expect(page.locator('#summary')).toHaveText('2 sprays');
+  await expect(page.locator('.tile-name')).toHaveText(['fade.vtf', 'plain.vtf']);
+  await expect(page.locator('.frame-badge')).toHaveText(['Fades: 2 pictures']);
+  await expect(page.locator('.fade-strip img')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Fade sprays first', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'View fade.vtf', exact: true }).click();
+  await expect(page.locator('#distance-controls')).toBeVisible();
+  await expect(page.locator('#distance-label')).toHaveText('Close (64 x 64)');
+  await expect(page.locator('#viewer-meta')).toContainText('Distance fade: 2 pictures');
+  await page.locator('#distance').fill('1');
+  await expect(page.locator('#distance-label')).toHaveText('2x farther (32 x 32)');
+  await expect.poll(() => page.locator('#full-image').evaluate(image => image.naturalWidth)).toBe(32);
+  await expect(page.locator('#full-image')).toHaveClass(/distant/);
+  const saved = page.waitForEvent('download');
+  await page.locator('#download-image').click();
+  expect((await saved).suggestedFilename()).toBe('fade-frame-1-distance-2x.png');
+  await page.locator('#close-viewer').click();
+  await page.getByRole('button', { name: 'View plain.vtf', exact: true }).click();
+  await expect(page.locator('#distance-controls')).toBeHidden();
+  await expect(page.locator('#full-image')).not.toHaveClass(/distant/);
+  expect(errors).toEqual([]);
 });
 
 test('filtering and replacing a collection during fingerprinting cannot strand jobs or restore old tiles', async ({ page }) => {
