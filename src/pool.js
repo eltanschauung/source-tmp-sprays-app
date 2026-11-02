@@ -65,8 +65,8 @@ export class DecoderPool {
       const job = this.jobs.shift();
       slot.job = job;
       slot.timeout = setTimeout(() => this.failSlot(slot, 'VTF decode exceeded the 15-second safety limit.'), 15000);
-      const { id, kind, file, frame = 0, maxDimension = 256, maxPixels } = job;
-      slot.worker.postMessage({ id, kind, file, frame, maxDimension, maxPixels });
+      const { id, kind, file, frame = 0, maxDimension = 256, maxPixels, mip = null } = job;
+      slot.worker.postMessage({ id, kind, file, frame, maxDimension, maxPixels, mip });
     }
   }
 

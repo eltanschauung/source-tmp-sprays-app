@@ -2,7 +2,7 @@ import { createIcons, GalleryVerticalEnd, ShieldCheck, CodeXml, Download, Folder
 import { formatBytes, sortEntries, exportLayout } from './catalog.js';
 import { DecoderPool } from './pool.js';
 import { deduplicateEntries } from './duplicates.js';
-import { markKey, loadMarks, saveMarks, relativePath, batchScript, shellScript } from './marks.js';
+import { markKey, loadMarks, saveMarks, loadIncludeDuplicates, saveIncludeDuplicates, relativePath, batchScript, shellScript } from './marks.js';
 import { Animator, SheetPlayer, sheetCanvas } from './animation.js';
 import './style.css';
 
@@ -13,7 +13,7 @@ const storage = (() => { try { return window.localStorage; } catch { return null
 // Frame sheets are capped so many visible animations stay within a modest memory budget.
 const TILE_SHEET = { maxDimension: 256, maxPixels: 2 ** 21 };
 const VIEWER_SHEET = { maxDimension: 1024, maxPixels: 2 ** 24 };
-const state = { entries: [], allEntries: [], root: '', generation: 0, descending: true, pool: null, completed: 0, ready: 0, failed: 0, bytes: 0, viewerToken: 0, viewerSession: 0, fullUrl: null, selected: null, viewerLoading: false, refreshPending: false, checkingDuplicates: false, fingerprinted: 0, duplicates: 0, marks: loadMarks(storage), showMarked: false, animate: !matchMedia('(prefers-reduced-motion: reduce)').matches, viewerPlaying: false, viewerPlayer: null, viewerSheet: null };
+const state = { entries: [], allEntries: [], root: '', generation: 0, descending: true, pool: null, completed: 0, ready: 0, failed: 0, bytes: 0, viewerToken: 0, viewerSession: 0, fullUrl: null, selected: null, viewerLoading: false, refreshPending: false, checkingDuplicates: false, fingerprinted: 0, duplicates: 0, marks: loadMarks(storage), includeDuplicates: loadIncludeDuplicates(storage), showMarked: false, animate: !matchMedia('(prefers-reduced-motion: reduce)').matches, viewerPlaying: false, viewerPlayer: null, viewerSheet: null };
 const animator = new Animator();
 const tileEntries = new WeakMap();
 const tileObserver = typeof IntersectionObserver === 'undefined' ? null : new IntersectionObserver(records => {
@@ -40,11 +40,40 @@ function notice(message = '', action = null) {
 }
 
 const isMarked = entry => state.marks.has(markKey(entry));
-// Includes hidden duplicate copies, which share the marked spray's hash.
-const markedFiles = () => state.allEntries.filter(isMarked);
+// Older copies hidden by deduplication have no tile.
+const duplicateCopies = () => state.allEntries.filter(entry => !entry.tile);
+// Marked sprays (with their hidden copies, which share the hash), plus every
+// hidden copy when duplicates are added to the list.
+const markedFiles = () => state.allEntries.filter(entry => isMarked(entry) || (state.includeDuplicates && !entry.tile));
+
+const resolutionOf = entry => entry.width ? `${entry.width}x${entry.height}` : '';
 
 function visibleEntries() {
-  return sortEntries(state.showMarked ? state.entries : state.entries.filter(entry => !isMarked(entry)), $('sort').value, state.descending, $('search').value);
+  const resolution = $('resolution').value;
+  const shown = state.entries.filter(entry => (state.showMarked || !isMarked(entry)) && (!resolution || resolutionOf(entry) === resolution));
+  return sortEntries(shown, $('sort').value, state.descending, $('search').value);
+}
+
+// Lists the sizes actually present (sprays are not always square or powers of two).
+let resolutionOptions = '';
+function updateResolutionOptions() {
+  const counts = new Map();
+  for (const entry of state.entries) if (entry.width) counts.set(resolutionOf(entry), (counts.get(resolutionOf(entry)) || 0) + 1);
+  const sizes = [...counts].sort(([a], [b]) => {
+    const [aw, ah] = a.split('x').map(Number), [bw, bh] = b.split('x').map(Number);
+    return bw * bh - aw * ah || bw - aw;
+  });
+  const signature = sizes.map(size => size.join(':')).join(',');
+  if (signature === resolutionOptions) return;
+  resolutionOptions = signature;
+  const selected = $('resolution').value;
+  const options = [new Option('All sizes', '')];
+  for (const [size, count] of sizes) options.push(new Option(`${size.replace('x', ' x ')} (${count.toLocaleString()})`, size));
+  $('resolution').replaceChildren(...options);
+  // Keep a chosen size selected while the rest of the folder decodes.
+  if (selected && !counts.has(selected)) $('resolution').append(new Option(selected.replace('x', ' x ') + ' (0)', selected));
+  $('resolution').value = selected;
+  $('resolution').disabled = !sizes.length;
 }
 
 function exportEntries() {
@@ -52,6 +81,7 @@ function exportEntries() {
 }
 
 function updateSummary() {
+  updateResolutionOptions();
   const { ready, failed } = state;
   const count = state.entries.length;
   const marked = state.entries.filter(isMarked).length;
@@ -65,8 +95,9 @@ function updateSummary() {
     ? `${state.checkingDuplicates ? state.fingerprinted / count * 50 : 50 + state.completed / count * 50}%` : '0';
   $('export').disabled = pending || !exportEntries().length;
   $('clear').disabled = !count;
-  $('marked-count').textContent = marked.toLocaleString();
-  $('marked').disabled = state.checkingDuplicates || !marked;
+  const listed = state.checkingDuplicates ? 0 : markedFiles().length;
+  $('marked-count').textContent = listed.toLocaleString();
+  $('marked').disabled = state.checkingDuplicates || (!listed && !state.duplicates);
 }
 
 function scheduleRefresh() {
@@ -74,7 +105,7 @@ function scheduleRefresh() {
   state.refreshPending = true;
   setTimeout(() => {
     state.refreshPending = false;
-    if (['dimensions', 'animated'].includes($('sort').value)) renderOrder();
+    if ($('resolution').value || ['dimensions', 'animated', 'fading'].includes($('sort').value)) renderOrder();
     else updateSummary();
   }, 100);
 }
@@ -112,8 +143,35 @@ function setMarked(entry, marked) {
   saveMarks(storage, state.marks);
   renderOrder();
   if (state.selected === entry) updateViewerMark();
-  if (marked && !state.showMarked) notice(`${entry.file.name} marked for deletion and hidden.`, { label: 'Undo', run: () => setMarked(entry, false) });
-  else notice();
+  if (marked) showMarkToast(entry);
+}
+
+// Floating, so it is seen even when the page is scrolled far from the header.
+// Marks made while it is up are grouped and undone together.
+const toast = { entries: [], timer: 0 };
+function showMarkToast(entry) {
+  toast.entries.push(entry);
+  const count = toast.entries.length;
+  $('toast-text').textContent = count === 1
+    ? `${entry.file.name} marked for deletion${state.showMarked ? '.' : ' and hidden.'}`
+    : `${count.toLocaleString()} sprays marked for deletion${state.showMarked ? '.' : ' and hidden.'}`;
+  $('toast').hidden = false;
+  if ($('toast').showPopover) {
+    // Re-showing moves it above any dialog opened since it appeared.
+    if ($('toast').matches(':popover-open')) $('toast').hidePopover();
+    $('toast').showPopover();
+  }
+  restartToastTimer();
+}
+function restartToastTimer(delay = 10000) {
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(hideToast, delay);
+}
+function hideToast() {
+  clearTimeout(toast.timer);
+  toast.entries = [];
+  if ($('toast').hidePopover && $('toast').matches(':popover-open')) $('toast').hidePopover();
+  $('toast').hidden = true;
 }
 
 function tileFor(entry) {
@@ -205,7 +263,7 @@ async function startTileAnimation(entry) {
     const canvas = document.createElement('canvas');
     canvas.setAttribute('aria-hidden', 'true');
     entry.player = new SheetPlayer(canvas, bitmap, entry.sheet);
-    entry.button.querySelector('img').hidden = true;
+    entry.image.hidden = true;
     entry.button.prepend(canvas);
     animator.add(entry.player);
   } catch {
@@ -223,7 +281,7 @@ function stopTileAnimation(entry) {
   animator.delete(player);
   player.source.close();
   player.canvas.remove();
-  entry.button.querySelector('img').hidden = false;
+  entry.image.hidden = false;
 }
 
 function closeViewer() {
@@ -239,6 +297,8 @@ function closeViewer() {
   state.fullUrl = null;
   state.selected = null;
   $('full-image').removeAttribute('src');
+  $('full-image').classList.remove('distant');
+  $('full-image').style.width = '';
   if ($('viewer').open) $('viewer').close();
 }
 
@@ -250,7 +310,10 @@ function reset() {
   tileObserver?.disconnect();
   for (const entry of state.entries) stopTileAnimation(entry);
   animator.clear();
-  for (const entry of state.entries) if (entry.url) URL.revokeObjectURL(entry.url);
+  for (const entry of state.entries) {
+    if (entry.url) URL.revokeObjectURL(entry.url);
+    for (const url of entry.fadeUrls || []) URL.revokeObjectURL(url);
+  }
   state.entries = [];
   state.allEntries = [];
   state.root = '';
@@ -263,7 +326,9 @@ function reset() {
   $('folder-input').value = '';
   $('file-input').value = '';
   $('search').value = '';
+  $('resolution').value = '';
   notice();
+  hideToast();
   renderOrder();
 }
 
@@ -273,22 +338,55 @@ async function decodeEntry(entry, generation, pool) {
     const canvas = await canvasFrom(result, 256);
     const blob = await toBlob(canvas);
     canvas.width = canvas.height = 0;
-    if (generation !== state.generation) return;
-    Object.assign(entry, { width: result.width, height: result.height, frames: result.frames, formatName: result.formatName, url: URL.createObjectURL(blob) });
+    const fadeUrls = [];
+    for (const far of result.fadeImages) {
+      const farCanvas = await canvasFrom(far, 96);
+      fadeUrls.push(URL.createObjectURL(await toBlob(farCanvas)));
+      farCanvas.width = farCanvas.height = 0;
+    }
+    if (generation !== state.generation) {
+      for (const url of fadeUrls) URL.revokeObjectURL(url);
+      return;
+    }
+    entry.fadeUrls = fadeUrls;
+    Object.assign(entry, { width: result.width, height: result.height, frames: result.frames, mips: result.mips, fades: result.fades, formatName: result.formatName, url: URL.createObjectURL(blob) });
     ++state.ready;
     const image = document.createElement('img');
     image.src = entry.url;
     image.alt = entry.file.name;
     image.loading = 'lazy';
     image.decoding = 'async';
+    entry.image = image;
     entry.button.replaceChildren(image);
     entry.button.disabled = false;
+    const badges = document.createElement('div');
+    badges.className = 'tile-badges';
     if (entry.frames > 1) {
       const badge = document.createElement('span');
       badge.className = 'frame-badge';
       badge.textContent = `${entry.frames} frames`;
-      entry.button.append(badge);
+      badges.append(badge);
       tileObserver?.observe(entry.tile);
+    }
+    if (entry.fades.length) {
+      const badge = document.createElement('span');
+      badge.className = 'frame-badge';
+      badge.title = 'Shows a different picture from farther away';
+      badge.textContent = `Fades: ${entry.fades.length + 1} pictures`;
+      badges.append(badge);
+    }
+    if (badges.childElementCount) entry.button.append(badges);
+    if (fadeUrls.length) {
+      const strip = document.createElement('span');
+      strip.className = 'fade-strip';
+      strip.title = 'Farther pictures';
+      for (const url of fadeUrls) {
+        const far = document.createElement('img');
+        far.src = url;
+        far.alt = '';
+        strip.append(far);
+      }
+      entry.button.append(strip);
     }
   } catch (error) {
     if (generation !== state.generation) return;
@@ -364,7 +462,8 @@ async function showFrame() {
   $('download-image').disabled = true;
   $('frame-number').textContent = `${Number($('frame').value) + 1} / ${entry.frames}`;
   try {
-    const result = await state.pool.decode(entry.file, { frame: Number($('frame').value), maxDimension: 4096 }, true);
+    const mip = Number($('distance').value);
+    const result = await state.pool.decode(entry.file, { frame: Number($('frame').value), maxDimension: 4096, mip }, true);
     const canvas = await canvasFrom(result, 4096);
     const blob = await toBlob(canvas);
     canvas.width = canvas.height = 0;
@@ -372,6 +471,9 @@ async function showFrame() {
     if (state.fullUrl) URL.revokeObjectURL(state.fullUrl);
     state.fullUrl = URL.createObjectURL(blob);
     $('full-image').src = state.fullUrl;
+    // Farther fade pictures are tiny; show them at the spray's full size, pixel for pixel.
+    $('full-image').classList.toggle('distant', mip > 0);
+    $('full-image').style.width = mip ? `${entry.width}px` : '';
     // Swap the preview animation for the full-resolution still once it is ready.
     if (!state.viewerPlaying) {
       $('full-animation').hidden = true;
@@ -402,6 +504,8 @@ async function playViewer() {
   const session = state.viewerSession;
   state.viewerPlaying = true;
   updatePlayButton();
+  // Playback shows the close picture.
+  setDistance(0);
   if (!state.viewerSheet) {
     // A second press while frames load only flips viewerPlaying back on.
     if (state.viewerLoading) return;
@@ -445,6 +549,13 @@ function updateViewerMark() {
   $('mark-viewer').querySelector('span').textContent = marked ? 'Unmark' : 'Mark for deletion';
 }
 
+function setDistance(mip) {
+  const entry = state.selected;
+  $('distance').value = String(mip);
+  const size = `${Math.max(1, entry.width >> mip)} x ${Math.max(1, entry.height >> mip)}`;
+  $('distance-label').textContent = mip ? `${2 ** mip}x farther (${size})` : `Close (${size})`;
+}
+
 function openViewer(entry) {
   closeViewer();
   state.selected = entry;
@@ -455,6 +566,10 @@ function openViewer(entry) {
   $('frame').max = String(entry.frames - 1);
   $('frame').value = '0';
   $('frame-controls').hidden = entry.frames <= 1;
+  $('distance-controls').hidden = !entry.fades.length;
+  $('distance').max = String(entry.mips - 1);
+  setDistance(0);
+  if (entry.fades.length) $('viewer-meta').textContent += ` / Distance fade: ${entry.fades.length + 1} pictures`;
   updateViewerMark();
   $('viewer').showModal();
   void showFrame();
@@ -485,6 +600,13 @@ function renderMarked() {
   $('marked-summary').textContent = files.length
     ? `${files.length.toLocaleString()} ${files.length === 1 ? 'file' : 'files'}${copies ? ` (including ${copies.toLocaleString()} hidden duplicate ${copies === 1 ? 'copy' : 'copies'})` : ''}. Browsers cannot delete files, so download a script, move it into ${folder} and run it. It asks before deleting anything.`
     : 'Nothing in this folder is marked.';
+  const duplicates = duplicateCopies().length;
+  $('toggle-duplicates').hidden = !duplicates;
+  $('toggle-duplicates').textContent = state.includeDuplicates
+    ? `Remove ${duplicates.toLocaleString()} duplicate ${duplicates === 1 ? 'copy' : 'copies'}`
+    : `Add ${duplicates.toLocaleString()} duplicate ${duplicates === 1 ? 'copy' : 'copies'}`;
+  $('toggle-duplicates').title = 'Older copies of sprays that appear more than once; the newest copy is kept';
+  const kept = new Map(state.entries.filter(entry => entry.fingerprint).map(entry => [entry.fingerprint, entry]));
   const list = document.createDocumentFragment();
   for (const entry of files) {
     const item = document.createElement('li');
@@ -495,13 +617,17 @@ function renderMarked() {
     if (!entry.tile) {
       const note = document.createElement('small');
       note.textContent = 'duplicate';
+      note.title = `Older copy of ${kept.get(entry.fingerprint)?.path ?? 'a kept spray'}`;
       item.append(note);
     }
-    const unmark = document.createElement('button');
-    unmark.textContent = 'Unmark';
-    unmark.setAttribute('aria-label', `Unmark ${entry.file.name}`);
-    unmark.addEventListener('click', () => { setMarked(entry, false); renderMarked(); });
-    item.append(unmark);
+    // Copies listed only because duplicates were added have nothing to unmark.
+    if (isMarked(entry)) {
+      const unmark = document.createElement('button');
+      unmark.textContent = 'Unmark';
+      unmark.setAttribute('aria-label', `Unmark ${entry.file.name}`);
+      unmark.addEventListener('click', () => { setMarked(entry, false); renderMarked(); });
+      item.append(unmark);
+    }
     list.append(item);
   }
   $('marked-list').replaceChildren(list);
@@ -585,10 +711,11 @@ for (const id of ['folder-input', 'file-input']) $(id).addEventListener('change'
   if (files.length) loadFiles(files.map(file => ({ file, path: file.webkitRelativePath || file.name })), files[0].webkitRelativePath?.split('/')[0]);
 });
 $('search').addEventListener('input', renderOrder);
+$('resolution').addEventListener('change', renderOrder);
 $('sort').addEventListener('change', () => { updateDirection(); renderOrder(); });
 $('direction').addEventListener('click', () => { state.descending = !state.descending; updateDirection(); renderOrder(); });
 function updateDirection() {
-  const descriptions = { date: ['Oldest first', 'Newest first'], size: ['Smallest first', 'Largest first'], name: ['A to Z', 'Z to A'], dimensions: ['Lowest resolution first', 'Highest resolution first'], animated: ['Still images first', 'Animated first'] };
+  const descriptions = { date: ['Oldest first', 'Newest first'], size: ['Smallest first', 'Largest first'], name: ['A to Z', 'Z to A'], dimensions: ['Lowest resolution first', 'Highest resolution first'], animated: ['Still images first', 'Animated first'], fading: ['Ordinary sprays first', 'Fade sprays first'] };
   const label = descriptions[$('sort').value][Number(state.descending)];
   $('direction').title = label;
   $('direction').setAttribute('aria-label', label);
@@ -599,6 +726,20 @@ $('tile-size').addEventListener('input', () => document.documentElement.style.se
 $('labels').addEventListener('change', () => $('gallery').classList.toggle('hide-labels', !$('labels').checked));
 $('animate').addEventListener('change', () => { state.animate = $('animate').checked; for (const entry of state.entries) updateTileAnimation(entry); });
 $('show-marked').addEventListener('change', () => setShowMarked($('show-marked').checked));
+$('toast-undo').addEventListener('click', () => {
+  const entries = toast.entries;
+  hideToast();
+  for (const entry of entries) {
+    state.marks.delete(markKey(entry));
+    if (state.selected === entry) updateViewerMark();
+  }
+  saveMarks(storage, state.marks);
+  renderOrder();
+});
+$('toast-close').addEventListener('click', hideToast);
+// Hovering keeps the toast up; leaving gives a few more seconds to reach Undo.
+$('toast').addEventListener('mouseenter', () => clearTimeout(toast.timer));
+$('toast').addEventListener('mouseleave', () => { if (!$('toast').hidden) restartToastTimer(4000); });
 $('clear').addEventListener('click', reset);
 $('export').addEventListener('click', exportCollage);
 $('close-viewer').addEventListener('click', closeViewer);
@@ -618,13 +759,25 @@ $('frame').addEventListener('input', () => {
   }
 });
 $('frame').addEventListener('change', showFrame);
+$('distance').addEventListener('input', () => {
+  if (state.viewerPlaying) stopViewerAnimation();
+  setDistance(Number($('distance').value));
+  void showFrame();
+});
 $('mark-viewer').addEventListener('click', () => setMarked(state.selected, !isMarked(state.selected)));
 $('download-image').addEventListener('click', async () => {
   if (state.viewerPlaying) await pauseViewer();
-  if (state.fullUrl && state.selected) download(state.fullUrl, `${state.selected.file.name.replace(/\.vtf$/i, '')}-frame-${Number($('frame').value) + 1}.png`);
+  const distance = Number($('distance').value);
+  if (state.fullUrl && state.selected) download(state.fullUrl, `${state.selected.file.name.replace(/\.vtf$/i, '')}-frame-${Number($('frame').value) + 1}${distance ? `-distance-${2 ** distance}x` : ''}.png`);
 });
 $('marked').addEventListener('click', () => { $('marked-status').textContent = ''; renderMarked(); $('marked-dialog').showModal(); });
 $('close-marked').addEventListener('click', () => $('marked-dialog').close());
+$('toggle-duplicates').addEventListener('click', () => {
+  state.includeDuplicates = !state.includeDuplicates;
+  saveIncludeDuplicates(storage, state.includeDuplicates);
+  updateSummary();
+  renderMarked();
+});
 $('marked-dialog').addEventListener('click', event => { if (event.target === $('marked-dialog')) { const rect = $('marked-dialog').getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) $('marked-dialog').close(); } });
 $('script-windows').addEventListener('click', () => downloadText(batchScript(markedPaths()), 'delete-marked-sprays.bat'));
 $('script-unix').addEventListener('click', () => downloadText(shellScript(markedPaths()), 'delete-marked-sprays.sh'));
@@ -639,6 +792,8 @@ $('copy-marked').addEventListener('click', async () => {
 });
 $('unmark-all').addEventListener('click', () => {
   for (const entry of markedFiles()) state.marks.delete(markKey(entry));
+  state.includeDuplicates = false;
+  saveIncludeDuplicates(storage, false);
   saveMarks(storage, state.marks);
   renderOrder();
   renderMarked();

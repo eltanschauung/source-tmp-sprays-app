@@ -40,3 +40,13 @@ export function dxtFixture(format = 13, frames = 1) {
   }
   return bytes.buffer;
 }
+
+// A 64x64 distance-fade spray: mip 1 holds a different (solid green) picture.
+// RGBA8888 mip data is stored smallest first at the end of the file.
+export async function fadeFixture() {
+  const buffer = await rgbaFixture({ mips: 3 });
+  const bytes = new Uint8Array(buffer);
+  const mip1 = bytes.length - 64 * 64 * 4 - 32 * 32 * 4;
+  for (let i = 0; i < 32 * 32; i++) bytes.set([0, 255, 0, 255], mip1 + i * 4);
+  return buffer;
+}

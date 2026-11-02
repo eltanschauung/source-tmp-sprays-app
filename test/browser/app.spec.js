@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { rgbaFixture, dxtFixture } from '../fixtures.js';
+import { rgbaFixture, dxtFixture, fadeFixture } from '../fixtures.js';
 import { mkdir, writeFile, utimes } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -59,6 +59,12 @@ test('folder import, decoding, date and size sorts, details, animation, PNG down
   expect((await imageDownload).suggestedFilename()).toBe('c-animated-frame-2.png');
   await page.locator('#close-viewer').click();
   await page.locator('#search').fill('');
+  // Resolution filter lists the sizes present, largest first, with counts.
+  await expect(page.locator('#resolution option')).toHaveText(['All sizes', '64 x 64 (2)', '4 x 4 (1)']);
+  await page.locator('#resolution').selectOption('4x4');
+  await expect(page.locator('.spray-tile:visible .tile-name')).toHaveText(['b-new.VTF']);
+  await page.locator('#resolution').selectOption('');
+  await expect(page.locator('.spray-tile:visible')).toHaveCount(4);
   const download = page.waitForEvent('download');
   await page.locator('#export').click();
   expect((await download).suggestedFilename()).toBe('source-sprays-collage.png');
@@ -126,6 +132,20 @@ test('stamped duplicates keep only the newest copy across sorting, filtering, vi
   // The source files remain byte-for-byte intact, including the IS14 stamp.
   const { readFile } = await import('node:fs/promises');
   expect(await readFile(path.join(dir, 'old-stamped.vtf'))).toEqual(Buffer.from(stamped));
+  // Hidden older copies can be added to the deletion list without marking the kept copy.
+  await expect(page.locator('#marked')).toBeEnabled();
+  await expect(page.locator('#marked-count')).toHaveText('0');
+  await page.locator('#marked').click();
+  await page.locator('#toggle-duplicates').click();
+  await expect(page.locator('#toggle-duplicates')).toHaveText('Remove 2 duplicate copies');
+  await expect(page.locator('#marked-list li span')).toHaveText(['middle-identical.vtf', 'old-stamped.vtf']);
+  await expect(page.locator('#marked-list button')).toHaveCount(0);
+  await expect(page.locator('#marked-count')).toHaveText('2');
+  await expect(page.locator('.spray-tile:visible')).toHaveCount(2);
+  await page.locator('#toggle-duplicates').click();
+  await expect(page.locator('#toggle-duplicates')).toHaveText('Add 2 duplicate copies');
+  await expect(page.locator('#marked-summary')).toHaveText('Nothing in this folder is marked.');
+  await page.locator('#close-marked').click();
   await page.locator('#clear').click();
   await expect(page.locator('#summary')).toHaveText('No folder selected');
   await page.locator('#file-input').setInputFiles(path.join(dir, 'old-stamped.vtf'));
@@ -143,9 +163,17 @@ test('marking hides sprays, persists across imports, excludes them from export a
   await page.getByRole('checkbox', { name: 'Mark broken.vtf for deletion' }).check();
   await expect(page.locator('.spray-tile:visible')).toHaveCount(2);
   await expect(page.locator('#summary')).toHaveText('3 sprays / 1 unreadable / 2 marked');
-  await expect(page.locator('#notice')).toContainText('broken.vtf marked for deletion and hidden.');
-  await page.locator('#notice').getByRole('button', { name: 'Undo' }).click();
-  await expect(page.locator('.spray-tile:visible')).toHaveCount(3);
+  // Marks made while the floating toast is up are grouped and undone together.
+  await expect(page.locator('#toast')).toBeVisible();
+  await expect(page.locator('#toast-text')).toHaveText('2 sprays marked for deletion and hidden.');
+  expect(await page.locator('#toast').evaluate(toast => getComputedStyle(toast).position)).toBe('fixed');
+  await page.locator('#toast-undo').click();
+  await expect(page.locator('#toast')).toBeHidden();
+  await expect(page.locator('.spray-tile:visible')).toHaveCount(4);
+  await page.getByRole('checkbox', { name: 'Mark c-animated.vtf for deletion' }).check();
+  await expect(page.locator('#toast-text')).toHaveText('c-animated.vtf marked for deletion and hidden.');
+  await page.locator('#toast-close').click();
+  await expect(page.locator('#toast')).toBeHidden();
   await page.getByRole('checkbox', { name: 'Mark broken.vtf for deletion' }).check();
   await page.locator('#show-marked').check();
   await expect(page.locator('.spray-tile:visible')).toHaveCount(4);
@@ -221,8 +249,42 @@ test('animated sprays play automatically in tiles and the viewer, and pause on s
   await expect(page.locator('#full-image')).toBeVisible();
   await page.locator('#mark-viewer').click();
   await expect(page.locator('#mark-viewer')).toHaveText('Unmark');
+  await expect(page.locator('#toast')).toBeVisible();
   await page.locator('#close-viewer').click();
   await expect(tile).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test('distance-fade sprays are badged, sortable and previewed level by level', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const dir = path.resolve('.local/fade-temp');
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, 'fade.vtf'), new Uint8Array(await fadeFixture()));
+  await writeFile(path.join(dir, 'plain.vtf'), new Uint8Array(await rgbaFixture({ mips: 3 })));
+  await page.goto('./');
+  await page.locator('#sort').selectOption('fading');
+  await page.locator('#folder-input').setInputFiles(dir);
+  await expect(page.locator('#summary')).toHaveText('2 sprays');
+  await expect(page.locator('.tile-name')).toHaveText(['fade.vtf', 'plain.vtf']);
+  await expect(page.locator('.frame-badge')).toHaveText(['Fades: 2 pictures']);
+  await expect(page.locator('.fade-strip img')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Fade sprays first', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'View fade.vtf', exact: true }).click();
+  await expect(page.locator('#distance-controls')).toBeVisible();
+  await expect(page.locator('#distance-label')).toHaveText('Close (64 x 64)');
+  await expect(page.locator('#viewer-meta')).toContainText('Distance fade: 2 pictures');
+  await page.locator('#distance').fill('1');
+  await expect(page.locator('#distance-label')).toHaveText('2x farther (32 x 32)');
+  await expect.poll(() => page.locator('#full-image').evaluate(image => image.naturalWidth)).toBe(32);
+  await expect(page.locator('#full-image')).toHaveClass(/distant/);
+  const saved = page.waitForEvent('download');
+  await page.locator('#download-image').click();
+  expect((await saved).suggestedFilename()).toBe('fade-frame-1-distance-2x.png');
+  await page.locator('#close-viewer').click();
+  await page.getByRole('button', { name: 'View plain.vtf', exact: true }).click();
+  await expect(page.locator('#distance-controls')).toBeHidden();
+  await expect(page.locator('#full-image')).not.toHaveClass(/distant/);
   expect(errors).toEqual([]);
 });
 

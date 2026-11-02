@@ -23,6 +23,25 @@ export function saveMarks(storage, marks) {
   }
 }
 
+const DUPLICATES_KEY = 'source-sprays-delete-duplicates';
+
+// Whether hidden older copies of duplicate sprays go on the deletion list.
+export function loadIncludeDuplicates(storage) {
+  try {
+    return storage?.getItem(DUPLICATES_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function saveIncludeDuplicates(storage, include) {
+  try {
+    storage?.setItem(DUPLICATES_KEY, include ? '1' : '0');
+  } catch {
+    // Falls back to this page only, like marks.
+  }
+}
+
 // Folder imports include the chosen folder's name; scripts run inside it.
 export function relativePath(path, root) {
   return root && path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
