@@ -29,9 +29,26 @@ Grouping is scoped to the current selection, resets on clear/re-import, and does
 not alter/delete source files or persist hashes. It is exact normalized-file
 deduplication, not perceptual similarity across recompressed/resized images.
 
+Each tile has a "mark for deletion" checkbox (also in the viewer). Marked sprays
+are hidden immediately (with Undo), left out of collage exports, and remembered
+in localStorage by normalized hash, so they stay hidden on later imports and
+when the same spray is downloaded again under another name; unreadable files
+are remembered by path. "Show marked" reveals them for unmarking. The Marked
+dialog lists every marked file, including hidden duplicate copies of a marked
+spray, and offers a list copy and Windows (.bat) / POSIX (.sh) delete scripts.
+Scripts use paths relative to the opened folder, must be placed in that folder,
+refuse to run if none of the files are next to them, and ask before deleting.
+The app itself still never modifies or deletes files.
+
 VTF 7.0-7.6 decoding uses vtf-js, including DXT1/3/5 and supported raw formats.
 The collage uses the first animation frame; individual viewers allow frame
-selection and full-resolution PNG downloads. Cube/volume textures, malformed or
+selection and full-resolution PNG downloads. Animated sprays play automatically
+at 5 fps (TF2's fixed spray rate) in tiles and the viewer; the "Animate" toggle
+turns tile playback off, and it defaults off with prefers-reduced-motion. Tile
+frames are decoded only for tiles near the viewport, downscaled to 256 px and a
+2-megapixel frame sheet, kept as a compressed PNG, and their bitmaps released
+when scrolled away. The viewer plays a sheet of up to 1024 px / 16 megapixels;
+pausing or scrubbing switches back to the full-resolution frame for saving. Cube/volume textures, malformed or
 unsupported formats, files over 64 MiB, excessive dimensions/frames, and decode
 timeouts appear as per-file errors without stopping the remaining collection.
 Two workers process bounded thumbnails, one selected full image is retained,
