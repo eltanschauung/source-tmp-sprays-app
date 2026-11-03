@@ -1,19 +1,20 @@
-import { createIcons, GalleryVerticalEnd, ShieldCheck, CodeXml, Download, FolderOpen, FilePlus2, Search, ArrowDownWideNarrow, ArrowUpNarrowWide, Grid2x2, Trash2, FolderPlus, FolderDown, X, ListX, Play, Pause } from 'lucide';
+import { createIcons, createElement, Star, GalleryVerticalEnd, ShieldCheck, CodeXml, Download, FolderOpen, FilePlus2, Search, ArrowDownWideNarrow, ArrowUpNarrowWide, Grid2x2, Trash2, FolderPlus, FolderDown, X, ListX, Play, Pause } from 'lucide';
 import { formatBytes, sortEntries, exportLayout } from './catalog.js';
 import { DecoderPool } from './pool.js';
 import { deduplicateEntries } from './duplicates.js';
 import { markKey, loadMarks, saveMarks, loadIncludeDuplicates, saveIncludeDuplicates, relativePath, batchScript, shellScript } from './marks.js';
 import { Animator, SheetPlayer, sheetCanvas } from './animation.js';
+import { loadFavorites, saveFavorites, defaultSprayName, validateSprayNames, installBatchScript, installShellScript } from './favorites.js';
 import './style.css';
 
-const icons = { GalleryVerticalEnd, ShieldCheck, CodeXml, Download, FolderOpen, FilePlus2, Search, ArrowDownWideNarrow, ArrowUpNarrowWide, Grid2x2, Trash2, FolderPlus, FolderDown, X, ListX, Play, Pause };
+const icons = { Star, GalleryVerticalEnd, ShieldCheck, CodeXml, Download, FolderOpen, FilePlus2, Search, ArrowDownWideNarrow, ArrowUpNarrowWide, Grid2x2, Trash2, FolderPlus, FolderDown, X, ListX, Play, Pause };
 const $ = id => document.getElementById(id);
 const refreshIcons = () => createIcons({ icons });
 const storage = (() => { try { return window.localStorage; } catch { return null; } })();
 // Frame sheets are capped so many visible animations stay within a modest memory budget.
 const TILE_SHEET = { maxDimension: 256, maxPixels: 2 ** 21 };
 const VIEWER_SHEET = { maxDimension: 1024, maxPixels: 2 ** 24 };
-const state = { entries: [], allEntries: [], root: '', generation: 0, descending: true, pool: null, completed: 0, ready: 0, failed: 0, bytes: 0, viewerToken: 0, viewerSession: 0, fullUrl: null, selected: null, viewerLoading: false, refreshPending: false, checkingDuplicates: false, fingerprinted: 0, duplicates: 0, marks: loadMarks(storage), includeDuplicates: loadIncludeDuplicates(storage), showMarked: false, animate: !matchMedia('(prefers-reduced-motion: reduce)').matches, viewerPlaying: false, viewerPlayer: null, viewerSheet: null };
+const state = { entries: [], allEntries: [], root: '', generation: 0, descending: true, pool: null, completed: 0, ready: 0, failed: 0, bytes: 0, viewerToken: 0, viewerSession: 0, fullUrl: null, selected: null, viewerLoading: false, refreshPending: false, checkingDuplicates: false, fingerprinted: 0, duplicates: 0, marks: loadMarks(storage), favorites: loadFavorites(storage), includeDuplicates: loadIncludeDuplicates(storage), showMarked: false, animate: !matchMedia('(prefers-reduced-motion: reduce)').matches, viewerPlaying: false, viewerPlayer: null, viewerSheet: null };
 const animator = new Animator();
 const tileEntries = new WeakMap();
 const tileObserver = typeof IntersectionObserver === 'undefined' ? null : new IntersectionObserver(records => {
@@ -40,6 +41,10 @@ function notice(message = '', action = null) {
 }
 
 const isMarked = entry => state.marks.has(markKey(entry));
+const isFavorite = entry => state.favorites.has(markKey(entry));
+const favoriteEntries = () => state.entries.filter(isFavorite);
+// Built once and cloned: createIcons rescans the whole document.
+const starIcon = createElement(Star);
 // Older copies hidden by deduplication have no tile.
 const duplicateCopies = () => state.allEntries.filter(entry => !entry.tile);
 // Marked sprays (with their hidden copies, which share the hash), plus every
@@ -97,6 +102,9 @@ function updateSummary() {
   $('clear').disabled = !count;
   const listed = state.checkingDuplicates ? 0 : markedFiles().length;
   $('marked-count').textContent = listed.toLocaleString();
+  const favorites = state.checkingDuplicates ? 0 : favoriteEntries().length;
+  $('favorites-count').textContent = favorites.toLocaleString();
+  $('favorites').disabled = !favorites;
   $('marked').disabled = state.checkingDuplicates || (!listed && !state.duplicates);
 }
 
@@ -125,6 +133,7 @@ function renderOrder() {
     entry.tile.hidden = !visible.has(entry);
     entry.tile.classList.toggle('marked', marked);
     entry.mark.checked = marked;
+    updateFavoriteToggle(entry);
   }
   // Move existing nodes instead of recreating decoded images when sorting.
   const fragment = document.createDocumentFragment();
@@ -134,6 +143,23 @@ function renderOrder() {
   $('gallery').hidden = state.entries.length === 0;
   $('no-results').hidden = state.entries.length === 0 || ordered.length > 0;
   updateSummary();
+}
+
+function setFavorite(entry, favorite) {
+  const key = markKey(entry);
+  if (favorite) state.favorites.set(key, state.favorites.get(key) ?? defaultSprayName(entry.file.name));
+  else state.favorites.delete(key);
+  saveFavorites(storage, state.favorites);
+  updateFavoriteToggle(entry);
+  if (state.selected === entry) updateViewerFavorite();
+  updateSummary();
+}
+
+function updateFavoriteToggle(entry) {
+  const favorite = isFavorite(entry);
+  entry.favorite.classList.toggle('active', favorite);
+  entry.favorite.setAttribute('aria-pressed', String(favorite));
+  entry.favorite.title = favorite ? 'Remove from favorites' : 'Add to favorites';
 }
 
 function setMarked(entry, marked) {
@@ -186,6 +212,11 @@ function tileFor(entry) {
   mark.setAttribute('aria-label', `Mark ${entry.file.name} for deletion`);
   mark.addEventListener('change', () => setMarked(entry, mark.checked));
   markLabel.append(mark);
+  const favorite = document.createElement('button');
+  favorite.className = 'favorite-toggle';
+  favorite.setAttribute('aria-label', `Favorite ${entry.file.name}`);
+  favorite.append(starIcon.cloneNode(true));
+  favorite.addEventListener('click', () => setFavorite(entry, !isFavorite(entry)));
   const button = document.createElement('button');
   button.className = 'spray-button';
   button.disabled = true;
@@ -210,7 +241,9 @@ function tileFor(entry) {
   size.textContent = formatBytes(entry.file.size);
   meta.append(date, size);
   info.append(name, meta);
-  tile.append(markLabel, button, info);
+  tile.append(markLabel, favorite, button, info);
+  entry.favorite = favorite;
+  updateFavoriteToggle(entry);
   entry.button = button;
   entry.mark = mark;
   entry.tile = tile;
@@ -543,6 +576,12 @@ function pauseViewer() {
   return showFrame();
 }
 
+function updateViewerFavorite() {
+  const favorite = isFavorite(state.selected);
+  $('favorite-viewer').setAttribute('aria-pressed', String(favorite));
+  $('favorite-viewer').querySelector('span').textContent = favorite ? 'Unfavorite' : 'Favorite';
+}
+
 function updateViewerMark() {
   const marked = isMarked(state.selected);
   $('mark-viewer').setAttribute('aria-pressed', String(marked));
@@ -571,6 +610,7 @@ function openViewer(entry) {
   setDistance(0);
   if (entry.fades.length) $('viewer-meta').textContent += ` / Distance fade: ${entry.fades.length + 1} pictures`;
   updateViewerMark();
+  updateViewerFavorite();
   $('viewer').showModal();
   void showFrame();
   if (state.animate && entry.frames > 1) void playViewer();
@@ -589,6 +629,68 @@ function downloadText(text, filename) {
   const url = URL.createObjectURL(new Blob([text], { type: 'application/octet-stream' }));
   download(url, filename);
   setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+const favoriteItems = () => favoriteEntries().map(entry => ({ entry, path: relativePath(entry.path, state.root), name: state.favorites.get(markKey(entry)) }));
+
+// TF2 refuses to upload sprays over 512 KB.
+const SPRAY_UPLOAD_LIMIT = 512 * 1024;
+
+function validateFavorites() {
+  const items = favoriteItems();
+  const errors = validateSprayNames(items.map(item => item.name));
+  items.forEach((item, index) => {
+    const error = item.entry.favoriteError;
+    if (!error) return;
+    error.textContent = errors.get(index) || (item.entry.file.size > SPRAY_UPLOAD_LIMIT ? "Over TF2's 512 KB upload limit: you will see it, other players will not." : '');
+    error.classList.toggle('warning', !errors.has(index));
+    item.entry.favoriteInput.setAttribute('aria-invalid', String(errors.has(index)));
+  });
+  for (const id of ['install-windows', 'install-unix']) $(id).disabled = !items.length || errors.size > 0;
+}
+
+function renderFavorites() {
+  const items = favoriteItems();
+  const folder = state.root ? `"${state.root}"` : 'the folder holding these files';
+  $('favorites-summary').textContent = items.length
+    ? `Name each spray as it should appear in TF2. The install script copies them into tf/materials/vgui/logos and writes their .vmt files; put it in ${folder} and run it. If that is tf/materials/temp it finds logos by itself, otherwise it asks for the folder.`
+    : 'No favorites in this folder. Star a spray to add it.';
+  const list = document.createDocumentFragment();
+  for (const { entry, path, name } of items) {
+    const item = document.createElement('li');
+    const preview = document.createElement('img');
+    preview.alt = '';
+    if (entry.url) preview.src = entry.url;
+    const fields = document.createElement('div');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = name;
+    input.maxLength = 64;
+    input.spellcheck = false;
+    input.setAttribute('aria-label', `Spray name for ${entry.file.name}`);
+    input.addEventListener('input', () => {
+      state.favorites.set(markKey(entry), input.value);
+      saveFavorites(storage, state.favorites);
+      validateFavorites();
+    });
+    const source = document.createElement('small');
+    source.textContent = `${path} / ${formatBytes(entry.file.size)}`;
+    const error = document.createElement('small');
+    error.className = 'favorite-error';
+    error.setAttribute('aria-live', 'polite');
+    fields.append(input, source, error);
+    const remove = document.createElement('button');
+    remove.textContent = 'Remove';
+    remove.setAttribute('aria-label', `Remove ${entry.file.name} from favorites`);
+    remove.addEventListener('click', () => { setFavorite(entry, false); renderFavorites(); });
+    item.append(preview, fields, remove);
+    entry.favoriteInput = input;
+    entry.favoriteError = error;
+    list.append(item);
+  }
+  $('favorites-list').replaceChildren(list);
+  $('favorites-list').hidden = !items.length;
+  validateFavorites();
 }
 
 const markedPaths = () => markedFiles().map(entry => relativePath(entry.path, state.root));
@@ -764,6 +866,13 @@ $('distance').addEventListener('input', () => {
   setDistance(Number($('distance').value));
   void showFrame();
 });
+$('favorite-viewer').addEventListener('click', () => setFavorite(state.selected, !isFavorite(state.selected)));
+$('favorites').addEventListener('click', () => { $('favorites-status').textContent = ''; renderFavorites(); $('favorites-dialog').showModal(); });
+$('close-favorites').addEventListener('click', () => $('favorites-dialog').close());
+$('favorites-dialog').addEventListener('click', event => { if (event.target === $('favorites-dialog')) { const rect = $('favorites-dialog').getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) $('favorites-dialog').close(); } });
+const installNote = () => { $('favorites-status').textContent = `Saved. Move the script into ${state.root ? `"${state.root}"` : 'the folder holding these files'} and run it.`; };
+$('install-windows').addEventListener('click', () => { downloadText(installBatchScript(favoriteItems()), 'install-favorite-sprays.bat'); installNote(); });
+$('install-unix').addEventListener('click', () => { downloadText(installShellScript(favoriteItems()), 'install-favorite-sprays.sh'); installNote(); });
 $('mark-viewer').addEventListener('click', () => setMarked(state.selected, !isMarked(state.selected)));
 $('download-image').addEventListener('click', async () => {
   if (state.viewerPlaying) await pauseViewer();
