@@ -47,6 +47,21 @@ Scripts use paths relative to the opened folder, must be placed in that folder,
 refuse to run if none of the files are next to them, and ask before deleting.
 The app itself still never modifies or deletes files.
 
+The star on each tile (and the viewer's Favorite button) adds a spray to the
+favorites, remembered in localStorage by normalized hash together with the
+name chosen for it (default: the filename). The Favorites dialog lists the
+favorites in the opened folder with previews and editable names; names must be
+1-64 letters, digits, spaces, `-` or `_` (no space at either end) and unique
+ignoring case, and sprays over TF2's 512 KB upload limit get a warning. Its
+Windows (.bat) and POSIX (.sh) install scripts go in the opened folder: they
+use `..\vgui\logos` when that is `tf/materials/temp` (otherwise they ask for the
+logos folder), ask before starting, copy each spray to `logos/NAME.vtf` and
+write `logos/NAME.vmt` and `logos/ui/NAME.vmt` in the same format TF2 writes
+when importing a spray. Existing sprays with the same name are never replaced,
+and missing source files are reported and skipped. The batch script switches to
+UTF-8 only after reading the folder prompt, because SET /P reads nothing under
+code page 65001.
+
 VTF 7.0-7.6 decoding uses vtf-js, including DXT1/3/5 and supported raw formats.
 The collage uses the first animation frame; individual viewers allow frame
 selection and full-resolution PNG downloads. Animated sprays play automatically

@@ -288,6 +288,54 @@ test('distance-fade sprays are badged, sortable and previewed level by level', a
   expect(errors).toEqual([]);
 });
 
+test('favorites are starred, named, validated, remembered and exported as an install script', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('./');
+  await page.locator('#folder-input').setInputFiles(folder);
+  await expect(page.locator('#summary')).toHaveText('3 sprays / 1 unreadable');
+  await expect(page.locator('#favorites')).toBeDisabled();
+  await page.getByRole('button', { name: 'Favorite a-old.vtf' }).click();
+  await expect(page.getByRole('button', { name: 'Favorite a-old.vtf' })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'View c-animated.vtf', exact: true }).click();
+  await page.locator('#favorite-viewer').click();
+  await expect(page.locator('#favorite-viewer')).toHaveText('Unfavorite');
+  await page.locator('#close-viewer').click();
+  await expect(page.locator('#favorites-count')).toHaveText('2');
+  await page.locator('#favorites').click();
+  const names = page.locator('#favorites-list input');
+  await expect(names).toHaveCount(2);
+  await names.nth(1).fill('A-OLD');
+  await expect(page.locator('.favorite-error').nth(1)).toContainText('Same name as');
+  await expect(page.locator('#install-windows')).toBeDisabled();
+  await names.nth(1).fill('Bad&Name');
+  await expect(page.locator('.favorite-error').nth(1)).toContainText('Use letters');
+  await names.nth(1).fill('Animated Spray');
+  await expect(page.locator('#install-windows')).toBeEnabled();
+  const script = page.waitForEvent('download');
+  await page.locator('#install-windows').click();
+  const download = await script;
+  expect(download.suggestedFilename()).toBe('install-favorite-sprays.bat');
+  const chunks = [];
+  for await (const chunk of await download.createReadStream()) chunks.push(chunk);
+  const text = Buffer.concat(chunks).toString();
+  const installs = text.split(/\r?\n/).filter(line => line.startsWith('call :install'));
+  expect(installs.sort()).toEqual(['call :install "a-old.vtf" "a-old"', 'call :install "nested\\c-animated.vtf" "Animated Spray"']);
+  await expect(page.locator('#favorites-status')).toContainText('fixture-temp');
+  await page.locator('#close-favorites').click();
+  // Names and stars survive a reload and re-import.
+  await page.reload();
+  await page.locator('#folder-input').setInputFiles(folder);
+  await expect(page.locator('#favorites-count')).toHaveText('2');
+  await page.locator('#favorites').click();
+  await expect(page.locator('#favorites-list input').nth(1)).toHaveValue('Animated Spray');
+  await page.getByRole('button', { name: 'Remove a-old.vtf from favorites' }).click();
+  await expect(page.locator('#favorites-list li')).toHaveCount(1);
+  await page.locator('#close-favorites').click();
+  await expect(page.getByRole('button', { name: 'Favorite a-old.vtf' })).toHaveAttribute('aria-pressed', 'false');
+  expect(errors).toEqual([]);
+});
+
 test('filtering and replacing a collection during fingerprinting cannot strand jobs or restore old tiles', async ({ page }) => {
   await page.addInitScript(() => {
     const post = Worker.prototype.postMessage;
